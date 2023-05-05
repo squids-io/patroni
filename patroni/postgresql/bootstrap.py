@@ -1,4 +1,4 @@
-import logging
+import logging, stat
 import os
 import shlex
 import tempfile
@@ -63,7 +63,7 @@ class Bootstrap(object):
         def error_handler(e):
             raise Exception(e)
 
-        options = self.process_user_options('initdb', config or [], not_allowed_options, error_handler)
+        options = self.process_user_options('gs_initdb', config or [], not_allowed_options, error_handler)
         pwfile = None
 
         if self._postgresql.config.superuser:
@@ -74,9 +74,7 @@ class Bootstrap(object):
                 os.write(fd, self._postgresql.config.superuser['password'].encode('utf-8'))
                 os.close(fd)
                 options.append('--pwfile={0}'.format(pwfile))
-        options = ['-o', ' '.join(options)] if options else []
-
-        ret = self._postgresql.pg_ctl('initdb', *options)
+        ret = self._postgresql.gs_initdb(*options)
         if pwfile:
             os.remove(pwfile)
         if ret:
@@ -247,10 +245,22 @@ class Bootstrap(object):
                 break
             if not self._postgresql.data_directory_empty():
                 self._postgresql.remove_data_directory()
+            if not os.path.exists(self._postgresql.data_dir):
+                os.makedirs(self._postgresql.data_dir)
+                os.chmod(self._postgresql.data_dir, stat.S_IRWXU)
             try:
-                ret = self._postgresql.cancellable.call([self._postgresql.pgcommand('pg_basebackup'),
-                                                         '--pgdata=' + self._postgresql.data_dir, '-X', 'stream',
-                                                         '--dbname=' + conn_url] + user_options, env=env)
+                connstr = conn_url.split(" ")
+                conn_dict = {}
+                for item in connstr:
+                    key, value = item.split("=")
+                    conn_dict[key] = value
+
+                cmd = [self._postgresql.gscommand('gs_basebackup'),
+                       '--pgdata=' + self._postgresql.data_dir, '-X', 'stream',
+                       '--username=' + conn_dict["user"], '--host=' + conn_dict["host"], '--port=' + conn_dict["port"],
+                       '--verbose', '-w']
+
+                ret = self._postgresql.cancellable.call(cmd + user_options, env=env)
                 if ret == 0:
                     break
                 else:
@@ -272,7 +282,7 @@ class Bootstrap(object):
                works without the replication connection (i.e. restore from on-disk
                base backup)
         """
-
+        logger.debug("create_replica clone_member=({0})".format(clone_member))
         ret = self.create_replica(clone_member) == 0
         if ret:
             self._post_restore()
@@ -326,13 +336,13 @@ END;$$""".format(quote_literal(name), quote_ident(name, self._postgresql.connect
         try:
             postgresql = self._postgresql
             superuser = postgresql.config.superuser
-            if 'username' in superuser and 'password' in superuser:
-                self.create_or_update_role(superuser['username'], superuser['password'], ['SUPERUSER'])
+            # if 'username' in superuser and 'password' in superuser:
+            #     self.create_or_update_role(superuser['username'], superuser['password'], ['SYSADMIN'])
 
             task.complete(self.call_post_bootstrap(config))
             if task.result:
                 replication = postgresql.config.replication
-                self.create_or_update_role(replication['username'], replication.get('password'), ['REPLICATION'])
+                self.create_or_update_role(replication['username'], replication.get('password'), ['SYSADMIN'])
 
                 rewind = postgresql.config.rewind_credentials
                 if not deep_compare(rewind, superuser):

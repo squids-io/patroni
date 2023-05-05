@@ -203,7 +203,7 @@ class Ha(object):
 
     def load_cluster_from_dcs(self):
         cluster = self.dcs.get_cluster()
-
+        logger.debug("load_cluster_from_dcs = ({0})".format(cluster))
         # We want to keep the state of cluster when it was healthy
         if not cluster.is_unlocked() or not self.old_cluster:
             self.old_cluster = cluster
@@ -386,7 +386,7 @@ class Ha(object):
                 return 'failed to acquire initialize lock'
         else:
             create_replica_methods = self.get_standby_cluster_config().get('create_replica_methods', []) \
-                                     if self.is_standby_cluster() else None
+                if self.is_standby_cluster() else None
             can_bootstrap = self.state_handler.can_create_replica_without_replication_connection(create_replica_methods)
             concurrent_bootstrap = self.cluster.initialize == ""
             if can_bootstrap and not concurrent_bootstrap:
@@ -524,7 +524,7 @@ class Ha(object):
         node_to_follow = self._get_node_to_follow(self.cluster)
 
         if self.is_paused():
-            if not (self._rewind.is_needed and self._rewind.can_rewind_or_reinitialize_allowed)\
+            if not (self._rewind.is_needed and self._rewind.can_rewind_or_reinitialize_allowed) \
                     or self.cluster.is_unlocked():
                 if is_leader:
                     self.state_handler.set_role('master')
@@ -662,7 +662,7 @@ class Ha(object):
             if self.touch_member():
                 # Primary should notice the updated value during the next cycle. We will wait double that, if primary
                 # hasn't noticed the value by then not disabling sync replication is not likely to matter.
-                for _ in polling_loop(timeout=self.dcs.loop_wait*2, interval=2):
+                for _ in polling_loop(timeout=self.dcs.loop_wait * 2, interval=2):
                     try:
                         if not self.is_sync_standby(self.dcs.get_cluster()):
                             break
@@ -833,6 +833,8 @@ class Ha(object):
         :returns True when node is lagging
         """
         lag = (self.cluster.last_lsn or 0) - wal_position
+        logger.info("is_lagging lag=({0})".format(lag))
+        logger.info("next lag=({0})".format(self.patroni.config.get('maximum_lag_on_failover', 0)))
         return lag > self.patroni.config.get('maximum_lag_on_failover', 0)
 
     def _is_healthiest_node(self, members, check_replication_lag=True):
@@ -881,7 +883,7 @@ class Ha(object):
                     logger.info('Member %s is %s', st.member.name, not_allowed_reason)
                 elif not isinstance(st.wal_position, int):
                     logger.info('Member %s does not report wal_position', st.member.name)
-                elif cluster_lsn and st.wal_position < cluster_lsn or\
+                elif cluster_lsn and st.wal_position < cluster_lsn or \
                         not cluster_lsn and self.is_lagging(st.wal_position):
                     logger.info('Member %s exceeds maximum replication lag', st.member.name)
                 elif self.check_timeline() and (not st.timeline or st.timeline < cluster_timeline):
@@ -902,7 +904,7 @@ class Ha(object):
                 # Remove failover key if the node to failover has terminated to avoid waiting for it indefinitely
                 # In order to avoid attempts to delete this key from all nodes only the primary is allowed to do it.
                 if (not self.cluster.get_member(failover.candidate, fallback_to_leader=False) and
-                   self.state_handler.is_leader()):
+                        self.state_handler.is_leader()):
                     logger.warning("manual failover: removing failover key because failover candidate is not running")
                     self.dcs.manual_failover('', '', index=self.cluster.failover.index)
                     return None
@@ -961,8 +963,8 @@ class Ha(object):
 
         if self.state_handler.is_leader():
             # in pause leader is the healthiest only when no initialize or sysid matches with initialize!
-            return not self.is_paused() or not self.cluster.initialize\
-                    or self.state_handler.sysid == self.cluster.initialize
+            return not self.is_paused() or not self.cluster.initialize \
+                or self.state_handler.sysid == self.cluster.initialize
 
         if self.is_paused():
             return False
@@ -1027,9 +1029,9 @@ class Ha(object):
                 PostgreSQL as quickly as possible without regard for data durability. May only be called synchronously.
         """
         mode_control = {
-            'offline':          dict(stop='fast', checkpoint=False, release=False, offline=True, async_req=False),
-            'graceful':         dict(stop='fast', checkpoint=True, release=True, offline=False, async_req=False),
-            'immediate':        dict(stop='immediate', checkpoint=False, release=True, offline=False, async_req=True),
+            'offline': dict(stop='fast', checkpoint=False, release=False, offline=True, async_req=False),
+            'graceful': dict(stop='fast', checkpoint=True, release=True, offline=False, async_req=False),
+            'immediate': dict(stop='immediate', checkpoint=False, release=True, offline=False, async_req=True),
             'immediate-nolock': dict(stop='immediate', checkpoint=False, release=False, offline=False, async_req=True),
         }[mode]
 
@@ -1137,8 +1139,8 @@ class Ha(object):
             return
 
         if (failover.scheduled_at and not
-            self.should_run_scheduled_action("failover", failover.scheduled_at, lambda:
-                                             self.dcs.manual_failover('', '', index=failover.index))):
+        self.should_run_scheduled_action("failover", failover.scheduled_at, lambda:
+        self.dcs.manual_failover('', '', index=failover.index))):
             return
 
         if not failover.leader or failover.leader == self.state_handler.name:
@@ -1235,8 +1237,8 @@ class Ha(object):
                     # enforce anything, since the leader is not a primary
                     # So just remind the role.
                     msg = 'no action. I am ({0}), the standby leader with the lock'.format(self.state_handler.name) \
-                          if self.state_handler.role == 'standby_leader' else \
-                          'promoted self to a standby leader because i had the session lock'
+                        if self.state_handler.role == 'standby_leader' else \
+                        'promoted self to a standby leader because i had the session lock'
                     return self.enforce_follow_remote_member(msg)
                 else:
                     return self.enforce_primary_role(
@@ -1259,16 +1261,17 @@ class Ha(object):
         if self.is_standby_cluster():
             return self.follow('cannot be a real primary in a standby cluster',
                                'no action. I am ({0}), a secondary, and following a standby leader ({1})'.format(
-                                    self.state_handler.name, lock_owner), refresh=False)
+                                   self.state_handler.name, lock_owner), refresh=False)
         return self.follow('demoting self because I do not have the lock and I was a leader',
                            'no action. I am ({0}), a secondary, and following a leader ({1})'.format(
-                                self.state_handler.name, lock_owner), refresh=False)
+                               self.state_handler.name, lock_owner), refresh=False)
 
     def evaluate_scheduled_restart(self):
         if self._async_executor.busy:  # Restart already in progress
             return None
 
         # restart if we need to
+        logger.info("restart_data = ({0})".format(self.patroni.scheduled_restart))
         restart_data = self.future_restart_scheduled()
         if restart_data:
             recent_time = self.state_handler.postmaster_start_time()
@@ -1280,7 +1283,7 @@ class Ha(object):
                 return None
 
         if (restart_data and
-           self.should_run_scheduled_action('restart', restart_data['schedule'], self.delete_future_restart)):
+                self.should_run_scheduled_action('restart', restart_data['schedule'], self.delete_future_restart)):
             try:
                 ret, message = self.restart(restart_data, run_async=True)
                 if not ret:
@@ -1410,7 +1413,7 @@ class Ha(object):
             if action is not None:
                 return '{0} already in progress'.format(action)
 
-        self._async_executor.run_async(self._do_reinitialize, args=(self.cluster, ))
+        self._async_executor.run_async(self._do_reinitialize, args=(self.cluster,))
 
     def handle_long_action_in_progress(self):
         """
@@ -1556,6 +1559,7 @@ class Ha(object):
         try:
             try:
                 self.load_cluster_from_dcs()
+                self.state_handler.reset_cluster_replconninfo(self.cluster)
                 self.state_handler.reset_cluster_info_state(self.cluster, self.patroni.nofailover)
             except Exception:
                 self.state_handler.reset_cluster_info_state(None, self.patroni.nofailover)
@@ -1580,6 +1584,7 @@ class Ha(object):
                 self.dcs.set_config_value(json.dumps(self.patroni.config.dynamic_configuration, separators=(',', ':')))
                 self.cluster = self.dcs.get_cluster()
 
+            logger.info("self._async_executor.busy =({0})".format(self._async_executor.busy))
             if self._async_executor.busy:
                 return self.handle_long_action_in_progress()
 
@@ -1628,7 +1633,7 @@ class Ha(object):
                 if self.has_lock():
                     self.release_leader_key_voluntarily()
                     return 'released leader key voluntarily as data dir {0} and currently leader'.format(
-                                'empty' if data_directory_is_accessible else 'not accessible')
+                        'empty' if data_directory_is_accessible else 'not accessible')
 
                 if not data_directory_is_accessible:
                     return 'data directory is not accessible: {0}'.format(data_directory_error)
@@ -1754,7 +1759,7 @@ class Ha(object):
         # Only the second one could be handled by `load_cluster_from_dcs()`.
         # The first one affects advancing logical replication slots on replicas, therefore we rely on
         # Failsafe.update_cluster(), that will return "modified" Cluster if failsafe mode is active.
-        cluster = self._failsafe.update_cluster(self.cluster)\
+        cluster = self._failsafe.update_cluster(self.cluster) \
             if self.is_failsafe_mode() and not self.is_leader() else self.cluster
         if cluster:
             slots = self.state_handler.slots_handler.sync_replication_slots(cluster,

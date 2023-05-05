@@ -236,7 +236,7 @@ class PatroniController(AbstractController):
                     config['postgresql']['pg_hba'][i] = 'hostssl' + line[4:] + ' clientcert=verify-ca'
 
         if 'bootstrap' in config:
-            config['bootstrap']['post_bootstrap'] = 'psql -w -c "SELECT 1"'
+            config['bootstrap']['post_bootstrap'] = 'gsql -c "SELECT 1"'
             if 'initdb' in config['bootstrap']:
                 config['bootstrap']['initdb'].extend([{'auth': 'md5'}, {'auth-host': 'md5'}])
 

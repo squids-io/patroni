@@ -13,6 +13,8 @@ from dateutil import tz
 from psutil import TimeoutExpired
 from threading import current_thread, Lock
 from typing import Optional
+from urllib.parse import urlparse
+from patroni.utils import compare_dist
 
 from .bootstrap import Bootstrap
 from .callback_executor import CallbackAction, CallbackExecutor
@@ -28,7 +30,6 @@ from .. import psycopg
 from ..dcs import Member
 from ..exceptions import PostgresConnectionException
 from ..utils import Retry, RetryFailedError, polling_loop, data_directory_is_empty, parse_int
-
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +47,15 @@ def null_context():
 
 
 class Postgresql(object):
-
     POSTMASTER_START_TIME = "pg_catalog.pg_postmaster_start_time()"
     TL_LSN = ("CASE WHEN pg_catalog.pg_is_in_recovery() THEN 0 "
               "ELSE ('x' || pg_catalog.substr(pg_catalog.pg_{0}file_name("
               "pg_catalog.pg_current_{0}_{1}()), 1, 8))::bit(32)::int END, "  # primary timeline
-              "CASE WHEN pg_catalog.pg_is_in_recovery() THEN 0 "
+              "CASE WHEN pg_catalog.pg_is_in_recovery() THEN GREATEST( pg_catalog.pg_{0}_{1}_diff("
+              "COALESCE(pg_catalog.pg_last_{0}_receive_{1}(), '0/0'), '0/0')::bigint, "
+              "pg_catalog.pg_{0}_{1}_diff((select lsn from pg_catalog.pg_last_{0}_replay_{1}()), '0/0')::bigint)"
               "ELSE pg_catalog.pg_{0}_{1}_diff(pg_catalog.pg_current_{0}_{1}(), '0/0')::bigint END, "  # write_lsn
-              "pg_catalog.pg_{0}_{1}_diff(pg_catalog.pg_last_{0}_replay_{1}(), '0/0')::bigint, "
+              "pg_catalog.pg_{0}_{1}_diff((select lsn from pg_catalog.pg_last_{0}_replay_{1}()), '0/0')::bigint,"
               "pg_catalog.pg_{0}_{1}_diff(COALESCE(pg_catalog.pg_last_{0}_receive_{1}(), '0/0'), '0/0')::bigint, "
               "pg_catalog.pg_is_in_recovery() AND pg_catalog.pg_is_{0}_replay_paused()")
 
@@ -65,6 +67,7 @@ class Postgresql(object):
         self._version_file = os.path.join(self._data_dir, 'PG_VERSION')
         self._pg_control = os.path.join(self._data_dir, 'global', 'pg_control')
         self._major_version = self.get_major_version()
+        self._dbtype = config.get('dbtype', 'opengauss')
 
         self._state_lock = Lock()
         self.set_state('stopped')
@@ -90,11 +93,11 @@ class Postgresql(object):
         self.cancellable = CancellableSubprocess()
 
         self._sysid = None
-        self.retry = Retry(max_tries=-1, deadline=config['retry_timeout']/2.0, max_delay=1,
+        self.retry = Retry(max_tries=-1, deadline=config['retry_timeout'] / 2.0, max_delay=1,
                            retry_exceptions=PostgresConnectionException)
 
         # Retry 'pg_is_in_recovery()' only once
-        self._is_leader_retry = Retry(max_tries=1, deadline=config['retry_timeout']/2.0, max_delay=1,
+        self._is_leader_retry = Retry(max_tries=1, deadline=config['retry_timeout'] / 2.0, max_delay=1,
                                       retry_exceptions=PostgresConnectionException)
 
         self._role_lock = Lock()
@@ -109,6 +112,8 @@ class Postgresql(object):
 
         # Last known running process
         self._postmaster_proc = None
+
+        self._cluster_members = None
 
         if self.is_running():  # we are "joining" already running postgres
             self.set_state('running')
@@ -130,6 +135,10 @@ class Postgresql(object):
     @property
     def major_version(self):
         return self._major_version
+
+    @property
+    def dbtype(self):
+        return self._dbtype
 
     @property
     def database(self):
@@ -173,12 +182,14 @@ class Postgresql(object):
 
         extra = ", " + (("pg_catalog.current_setting('synchronous_commit'), " +
                          "pg_catalog.current_setting('synchronous_standby_names'), "
-                         "(SELECT pg_catalog.json_agg(r.*) FROM (SELECT w.pid as pid, application_name, sync_state," +
+                         "(SELECT pg_catalog.json_agg(r.*) FROM (SELECT w.pid as pid, (select application_name from "
+                         "pg_stat_get_activity(w.pid)) AS application_name, sync_state," +
                          " pg_catalog.pg_{0}_{1}_diff(write_{1}, '0/0')::bigint AS write_lsn," +
                          " pg_catalog.pg_{0}_{1}_diff(flush_{1}, '0/0')::bigint AS flush_lsn," +
                          " pg_catalog.pg_{0}_{1}_diff(replay_{1}, '0/0')::bigint AS replay_lsn " +
-                         "FROM pg_catalog.pg_stat_get_wal_senders() w," +
-                         " pg_catalog.pg_stat_get_activity(w.pid)" +
+                         "FROM (SELECT sender_pid AS pid,state, sync_state, sender_write_location AS write_location, "
+                         "sender_flush_location AS flush_location, sender_replay_location AS replay_location FROM "
+                         "pg_catalog.pg_stat_get_wal_senders()) AS w " +
                          " WHERE w.state = 'streaming') r)").format(self.wal_name, self.lsn_name)
                         if self._is_synchronous_mode and self.role in ('master', 'primary') else "'on', '', NULL")
 
@@ -197,6 +208,12 @@ class Postgresql(object):
             extra = "0, NULL, NULL, NULL, NULL" + extra
 
         return ("SELECT " + self.TL_LSN + ", {2}").format(self.wal_name, self.lsn_name, extra)
+
+    def cluster_members(self):
+        return self._cluster_members
+
+    def set_cluster_members(self, members):
+        self._cluster_members = members
 
     def _version_file_exists(self):
         return not self.data_directory_empty() and os.path.isfile(self._version_file)
@@ -217,6 +234,9 @@ class Postgresql(object):
         """Returns path to the specified PostgreSQL command"""
         return os.path.join(self._bin_dir, cmd)
 
+    def gscommand(self, cmd):
+        return os.path.join(self._bin_dir, cmd)
+
     def pg_ctl(self, cmd, *args, **kwargs):
         """Builds and executes pg_ctl command
 
@@ -225,21 +245,31 @@ class Postgresql(object):
         pg_ctl = [self.pgcommand('pg_ctl'), cmd]
         return subprocess.call(pg_ctl + ['-D', self._data_dir] + list(args), **kwargs) == 0
 
+    def gs_ctl(self, cmd, *args, **kwargs):
+
+        gs_ctl = [self.gscommand('gs_ctl'), cmd]
+        return subprocess.call(gs_ctl + ['-D', self._data_dir] + list(args), **kwargs) == 0
+
+    def gs_initdb(self, *args, **kwargs):
+        pg_ctl = [self.pgcommand('gs_initdb')]
+        logger.info(f"command is {pg_ctl + ['-D', self._data_dir] + list(args)}")
+        return subprocess.call(pg_ctl + ['-D', self._data_dir] + list(args), **kwargs) == 0
+
     def pg_isready(self):
         """Runs pg_isready to see if PostgreSQL is accepting connections.
 
         :returns: 'ok' if PostgreSQL is up, 'reject' if starting up, 'no_resopnse' if not up."""
 
         r = self.config.local_connect_kwargs
-        cmd = [self.pgcommand('pg_isready'), '-p', r['port'], '-d', self._database]
+        cmd = [self.gscommand('gs_ctl'), 'status', '-D', self._data_dir]
 
-        # Host is not set if we are connecting via default unix socket
-        if 'host' in r:
-            cmd.extend(['-h', r['host']])
-
-        # We only need the username because pg_isready does not try to authenticate
-        if 'user' in r:
-            cmd.extend(['-U', r['user']])
+        # # Host is not set if we are connecting via default unix socket
+        # if 'host' in r:
+        #     cmd.extend(['-h', r['host']])
+        #
+        # # We only need the username because pg_isready does not try to authenticate
+        # if 'user' in r:
+        #     cmd.extend(['-U', r['user']])
 
         ret = subprocess.call(cmd)
         return_codes = {0: STATE_RUNNING,
@@ -250,7 +280,7 @@ class Postgresql(object):
 
     def reload_config(self, config, sighup=False):
         self.config.reload_config(config, sighup)
-        self._is_leader_retry.deadline = self.retry.deadline = config['retry_timeout']/2.0
+        self._is_leader_retry.deadline = self.retry.deadline = config['retry_timeout'] / 2.0
 
     @property
     def pending_restart(self):
@@ -354,7 +384,7 @@ class Postgresql(object):
     def reset_cluster_info_state(self, cluster, nofailover=None):
         self._cluster_info_state = {}
         if cluster and cluster.config and cluster.config.modify_index:
-            self._has_permanent_logical_slots =\
+            self._has_permanent_logical_slots = \
                 cluster.has_permanent_logical_slots(self.name, nofailover, self.major_version)
 
             # We want to enable hot_standby_feedback if the replica is supposed
@@ -365,6 +395,29 @@ class Postgresql(object):
 
             self._is_synchronous_mode = cluster.is_synchronous_mode()
 
+    def reset_cluster_replconninfo(self, cluster):
+        new_cluster_member = None
+        is_update = False
+        old_cluster_member = self.cluster_members()
+        if cluster and cluster.members:
+            new_cluster_member = {member.name: urlparse(member.conn_url).hostname for member in cluster.members if
+                                  member and member.name and member.conn_url}
+        if not new_cluster_member and old_cluster_member:
+            is_update = True
+        if new_cluster_member and not old_cluster_member:
+            is_update = True
+        if new_cluster_member and old_cluster_member:
+            logger.info("new_cluster_member=({0})  ; old_cluster_member=({1})".format(new_cluster_member,
+                                                                                      old_cluster_member))
+            is_update = compare_dist(new_cluster_member, old_cluster_member)
+        self.set_cluster_members(new_cluster_member)
+        if is_update:
+            logger.info("is_update=true")
+            if self.state == "running":
+                logger.info("is_running")
+                self.config.write_postgresql_conf()
+                self.reload()
+
     def _cluster_info_state_get(self, name):
         if not self._cluster_info_state:
             try:
@@ -374,7 +427,7 @@ class Postgresql(object):
                                                'received_tli', 'slot_name', 'conninfo', 'slots', 'synchronous_commit',
                                                'synchronous_standby_names', 'pg_stat_replication'], result))
                 if self._has_permanent_logical_slots:
-                    cluster_info_state['slots'] =\
+                    cluster_info_state['slots'] = \
                         self.slots_handler.process_permanent_slots(cluster_info_state['slots'])
                 self._cluster_info_state = cluster_info_state
             except RetryFailedError as e:  # SELECT failed two times
@@ -462,7 +515,7 @@ class Postgresql(object):
                 checkpoint_lsn = parse_lsn(checkpoint_lsn)
                 rm_name, lsn, prev, desc = self.parse_wal_record(timeline, lsn)
                 desc = desc.strip().lower()
-                if rm_name == 'XLOG' and parse_lsn(lsn) == checkpoint_lsn and prev and\
+                if rm_name == 'XLOG' and parse_lsn(lsn) == checkpoint_lsn and prev and \
                         desc.startswith('checkpoint') and desc.endswith('shutdown'):
                     _, lsn, _, desc = self.parse_wal_record(timeline, prev)
                     prev = parse_lsn(prev)
@@ -601,12 +654,18 @@ class Postgresql(object):
         if self.cancellable.is_cancelled:
             return False
 
+        options.append('-M')
+        if self._role == 'master':
+            options.append('primary')
+        else:
+            if self._role == 'replica':
+                options.append('standby')
         with task or null_context():
             if task and task.is_cancelled:
                 logger.info("PostgreSQL start cancelled.")
                 return False
 
-            self._postmaster_proc = PostmasterProcess.start(self.pgcommand('postgres'),
+            self._postmaster_proc = PostmasterProcess.start(self.pgcommand('gaussdb'),
                                                             self._data_dir,
                                                             self.config.postgresql_conf,
                                                             options)
@@ -767,7 +826,7 @@ class Postgresql(object):
             pass
 
     def reload(self, block_callbacks=False):
-        ret = self.pg_ctl('reload')
+        ret = self.gs_ctl('reload')
         if ret and not block_callbacks:
             self.call_nowait(CallbackAction.ON_RELOAD)
         return ret
@@ -838,8 +897,8 @@ class Postgresql(object):
         self.set_state('restarting')
         if not block_callbacks:
             self.__cb_pending = CallbackAction.ON_RESTART
-        ret = self.stop(block_callbacks=True, before_shutdown=before_shutdown)\
-            and self.start(timeout, task, True, role, after_start)
+        ret = self.stop(block_callbacks=True, before_shutdown=before_shutdown) \
+              and self.start(timeout, task, True, role, after_start)
         if not ret and not self.is_starting():
             self.set_state('restart failed ({0})'.format(self.state))
         return ret
@@ -905,7 +964,7 @@ class Postgresql(object):
             logger.exception('Can not fetch local timeline and lsn from replication connection')
 
     def replica_cached_timeline(self, primary_timeline):
-        if not self._cached_replica_timeline or not primary_timeline\
+        if not self._cached_replica_timeline or not primary_timeline \
                 or self._cached_replica_timeline != primary_timeline:
             self._cached_replica_timeline = self.get_replica_timeline()
         return self._cached_replica_timeline
@@ -1024,7 +1083,7 @@ class Postgresql(object):
         self.slots_handler.on_promote()
         self.citus_handler.schedule_cache_rebuild()
 
-        ret = self.pg_ctl('promote', '-W')
+        ret = self.gs_ctl('failover', '-W')
         if ret:
             self.set_role('promoted')
             if on_success is not None:

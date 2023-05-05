@@ -19,11 +19,11 @@ from threading import Condition, Lock, Thread
 from typing import Any, Dict, List, Optional
 from urllib3.exceptions import HTTPError
 
-from . import AbstractDCS, Cluster, ClusterConfig, Failover, Leader, Member, SyncState,\
-        TimelineHistory, CITUS_COORDINATOR_GROUP_ID, citus_group_re
+from . import AbstractDCS, Cluster, ClusterConfig, Failover, Leader, Member, SyncState, \
+    TimelineHistory, CITUS_COORDINATOR_GROUP_ID, citus_group_re
 from ..exceptions import DCSError
-from ..utils import deep_compare, iter_response_objects, keepalive_socket_options,\
-        Retry, RetryFailedError, tzutc, uri, USER_AGENT
+from ..utils import deep_compare, iter_response_objects, keepalive_socket_options, \
+    Retry, RetryFailedError, tzutc, uri, USER_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,6 @@ def to_camel_case(value):
 
 
 class K8sConfig(object):
-
     class ConfigException(Exception):
         pass
 
@@ -143,7 +142,7 @@ class K8sConfig(object):
         if user.get('token'):
             self._make_headers(token=user['token'])
         elif 'username' in user and 'password' in user:
-            self._headers = self._make_headers(basic_auth=':'.join((user['username'],  user['password'])))
+            self._headers = self._make_headers(basic_auth=':'.join((user['username'], user['password'])))
 
     @property
     def server(self):
@@ -175,7 +174,7 @@ class K8sObject(object):
         if isinstance(value, dict):
             # we know that `annotations` and `labels` are dicts and therefore don't want to convert them into K8sObject
             return value if parent in {'annotations', 'labels'} and \
-                    all(isinstance(v, str) for v in value.values()) else cls(value)
+                            all(isinstance(v, str) for v in value.values()) else cls(value)
         elif isinstance(value, list):
             return [cls._wrap(None, v) for v in value]
         else:
@@ -259,24 +258,27 @@ class K8sClient(object):
         @property
         def api_servers_cache(self):
             base_uri, cache = self._base_uri, self._api_servers_cache
+            logger.info("base_uri={0},cache={1}".format(base_uri, cache))
             return ([base_uri] if base_uri in cache else []) + [machine for machine in cache if machine != base_uri]
 
         def _get_api_servers(self, api_servers_cache):
             _, per_node_timeout, per_node_retries = self._calculate_timeouts(len(api_servers_cache))
             kwargs = {'headers': self._make_headers({}), 'preload_content': True, 'retries': per_node_retries,
-                      'timeout': urllib3.Timeout(connect=max(1, per_node_timeout/2.0), total=per_node_timeout)}
+                      'timeout': urllib3.Timeout(connect=max(1, per_node_timeout / 2.0), total=per_node_timeout)}
             path = self._API_URL_PREFIX + 'default/endpoints/kubernetes'
             for base_uri in api_servers_cache:
                 try:
-                    response = self.pool_manager.request('GET', base_uri + path, **kwargs)
-                    endpoint = self._handle_server_response(response, True)
-                    for subset in endpoint.subsets:
-                        for port in subset.ports:
-                            if port.name == 'https' and port.protocol == 'TCP':
-                                addresses = [uri('https', (a.ip, port.port)) for a in subset.addresses]
-                                if addresses:
-                                    random.shuffle(addresses)
-                                    return addresses
+                    return base_uri
+                    # response = self.pool_manager.request('GET', base_uri + path, **kwargs)
+                    # endpoint = self._handle_server_response(response, True)
+                    # logger.info("get response endpoint ={0}".format(endpoint))
+                    # for subset in endpoint.subsets:
+                    #     for port in subset.ports:
+                    #         if port.name == 'https' and port.protocol == 'TCP':
+                    #             addresses = [uri('https', (a.ip, port.port)) for a in subset.addresses]
+                    #             if addresses:
+                    #                 random.shuffle(addresses)
+                    #                 return addresses
                 except Exception as e:
                     if isinstance(e, k8s_client.rest.ApiException) and e.status == 403:
                         raise
@@ -382,7 +384,7 @@ class K8sClient(object):
                 retries = 0
             else:
                 _, timeout, retries = self._calculate_timeouts(api_servers)
-                timeout = urllib3.Timeout(connect=max(1, timeout/2.0), total=timeout)
+                timeout = urllib3.Timeout(connect=max(1, timeout / 2.0), total=timeout)
             kwargs.update(retries=retries, timeout=timeout)
 
             while True:
@@ -405,7 +407,8 @@ class K8sClient(object):
                     retry.sleep_func(sleeptime)
                     retry.update_delay()
                     # We still have some time left. Partially reduce `api_servers_cache` and retry request
-                    kwargs.update(timeout=urllib3.Timeout(connect=max(1, timeout/2.0), total=timeout), retries=retries)
+                    kwargs.update(timeout=urllib3.Timeout(connect=max(1, timeout / 2.0), total=timeout),
+                                  retries=retries)
                     api_servers_cache = api_servers_cache[:nodes]
 
         def call_api(self, method, path, headers=None, body=None, _retry=None,
@@ -449,10 +452,12 @@ class K8sClient(object):
                     body = None
 
                 return self._api_client.call_api(method, path, headers, body, **kwargs)
+
             return wrapper
 
     class _K8sObjectTemplate(K8sObject):
         """The template for objects which we create locally, e.g. k8s_client.V1ObjectMeta & co"""
+
         def __init__(self, **kwargs):
             self._dict = {to_camel_case(k): v for k, v in kwargs.items()}
 
@@ -503,7 +508,7 @@ class CoreV1ApiProxy(object):
         # to start worrying (send keepalive messages). Finally, the connection should be
         # considered as dead if we received nothing from the socket after the ttl seconds.
         self._api_client.pool_manager.connection_pool_kw['socket_options'] = \
-                list(keepalive_socket_options(ttl, int(loop_wait + retry_timeout)))
+            list(keepalive_socket_options(ttl, int(loop_wait + retry_timeout)))
         self._api_client.set_read_timeout(retry_timeout)
         self._api_client.set_api_servers_cache_ttl(loop_wait)
 
@@ -532,6 +537,7 @@ class CoreV1ApiProxy(object):
                 if e.status in self._retriable_http_codes or e.headers and 'retry-after' in e.headers:
                     raise KubernetesRetriableException(e)
                 raise
+
         return wrapper
 
     @property
@@ -622,7 +628,7 @@ class ObjectCache(Thread):
                 old_value = (old_value.metadata.annotations or {}).get(self._annotations_map.get(name))
 
             value_changed = old_value != new_value and \
-                (name != self._dcs.config_path or old_value is not None and new_value is not None)
+                            (name != self._dcs.config_path or old_value is not None and new_value is not None)
 
             if value_changed:
                 logger.debug('%s changed from %s to %s', name, old_value, new_value)
@@ -873,9 +879,9 @@ class Kubernetes(AbstractDCS):
 
         # get leader
         leader_record = {n: annotations.get(n) for n in (self._LEADER, 'acquireTime',
-                         'ttl', 'renewTime', 'transitions') if n in annotations}
+                                                         'ttl', 'renewTime', 'transitions') if n in annotations}
         # We want to memorize leader_observed_record and update leader_observed_time only for our cluster
-        if leader_path == self.leader_path and (leader_record or self._leader_observed_record)\
+        if leader_path == self.leader_path and (leader_record or self._leader_observed_record) \
                 and leader_record != self._leader_observed_record:
             self._leader_observed_record = leader_record
             self._leader_observed_time = time.time()
@@ -887,7 +893,7 @@ class Kubernetes(AbstractDCS):
             ttl = self._ttl
 
         # We want to check validity of the leader record only for our own cluster
-        if leader_path == self.leader_path and\
+        if leader_path == self.leader_path and \
                 not (metadata and self._leader_observed_time and self._leader_observed_time + ttl >= time.time()):
             leader = None
 
@@ -896,6 +902,8 @@ class Kubernetes(AbstractDCS):
             member = ([m for m in members if m.name == leader] or [member])[0]
             leader = Leader(metadata.resource_version, None, member)
 
+        if leader and not leader.data:
+            leader = None
         # failover key
         failover = nodes.get(path + self._FAILOVER)
         metadata = failover and failover.metadata
@@ -905,7 +913,7 @@ class Kubernetes(AbstractDCS):
         # get synchronization state
         sync = nodes.get(path + self._SYNC)
         metadata = sync and sync.metadata
-        sync = SyncState.from_node(metadata and metadata.resource_version,  metadata and metadata.annotations)
+        sync = SyncState.from_node(metadata and metadata.resource_version, metadata and metadata.annotations)
 
         return Cluster(initialize, config, leader, last_lsn, members, failover, sync, history, slots, failsafe)
 

@@ -8,12 +8,12 @@ import time
 
 from urllib.parse import urlparse, parse_qsl, unquote
 
-from .validator import CaseInsensitiveDict, recovery_parameters,\
-        transform_postgresql_parameter_value, transform_recovery_parameter_value
+from .validator import CaseInsensitiveDict, recovery_parameters, \
+    transform_postgresql_parameter_value, transform_recovery_parameter_value
 from ..dcs import slot_name_from_member_name, RemoteMember
 from ..exceptions import PatroniFatalException
 from ..utils import compare_values, parse_bool, parse_int, split_host_port, uri, \
-        validate_directory, is_subpath
+    validate_directory, is_subpath
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +250,6 @@ class ConfigWriter(object):
 
 
 class ConfigHandler(object):
-
     # List of parameters which must be always passed to postmaster as command line options
     # to make it not possible to change them with 'ALTER SYSTEM'.
     # Some of these parameters have sane default value assigned and Patroni doesn't allow
@@ -387,12 +386,29 @@ class ConfigHandler(object):
         if self._postgresql.enforce_hot_standby_feedback:
             configuration['hot_standby_feedback'] = 'on'
 
+        cluster_members = self._postgresql.cluster_members()
+        logger.info("cluster_member = ({0})".format(cluster_members))
+        if self._postgresql.dbtype == 'opengauss' and cluster_members:
+            nodename = self._postgresql.name
+            localhost = cluster_members.get(nodename, None)
+            if localhost:
+                index = 1
+                for name, value in cluster_members.items():
+                    if name == nodename:
+                        continue
+                    configuration['replconninfo{0}'.format(index)] = 'localhost={0} localport=5433 ' \
+                                                                       'localheartbeatport=26002 localservice=26003 ' \
+                                                                       'remotehost={1} remoteport=5433 ' \
+                                                                       'remoteheartbeatport=26002 ' \
+                                                                       'remoteservice=26003'.format(localhost, value)
+                    index += 1
+        logger.info("configuration = ({0})".format(configuration))
         with ConfigWriter(self._postgresql_conf) as f:
             include = self._config.get('custom_conf') or self._postgresql_base_conf_name
             f.writeline("include '{0}'\n".format(ConfigWriter.escape(include)))
             for name, value in sorted((configuration).items()):
-                value = transform_postgresql_parameter_value(self._postgresql.major_version, name, value)
-                if value is not None and\
+                # value = transform_postgresql_parameter_value(self._postgresql.major_version, name, value)
+                if name not in self._RECOVERY_PARAMETERS and \
                         (name != 'hba_file' or not self._postgresql.bootstrap.running_custom_bootstrap):
                     f.write_param(name, value)
             # when we are doing custom bootstrap we assume that we don't know superuser password
@@ -432,15 +448,16 @@ class ConfigHandler(object):
             addresses = {} if os.name == 'nt' else {'': 'local'}  # windows doesn't yet support unix-domain sockets
             if 'host' in self.local_replication_address and not self.local_replication_address['host'].startswith('/'):
                 addresses.update({sa[0] + '/32': 'host' for _, _, _, _, sa in socket.getaddrinfo(
-                                  self.local_replication_address['host'], self.local_replication_address['port'],
-                                  0, socket.SOCK_STREAM, socket.IPPROTO_TCP)})
+                    self.local_replication_address['host'], self.local_replication_address['port'],
+                    0, socket.SOCK_STREAM, socket.IPPROTO_TCP)})
 
             with ConfigWriter(self._pg_hba_conf) as f:
                 for address, t in addresses.items():
                     f.writeline((
-                        '{0}\treplication\t{1}\t{3}\ttrust\n'
-                        '{0}\tall\t{2}\t{3}\ttrust'
-                    ).format(t, self.replication['username'], self._superuser.get('username') or 'all', address))
+                                    '{0}\treplication\t{1}\t{3}\ttrust\n'
+                                    '{0}\tall\t{2}\t{3}\ttrust'
+                                ).format(t, self.replication['username'], self._superuser.get('username') or 'all',
+                                         address))
         elif not self.hba_file and self._config.get('pg_hba'):
             with ConfigWriter(self._pg_hba_conf) as f:
                 f.writelines(self._config['pg_hba'])
@@ -522,7 +539,7 @@ class ConfigHandler(object):
         recovery_params = CaseInsensitiveDict({p: v for p, v in self.get('recovery_conf', {}).items()
                                                if not p.lower().startswith('recovery_target') and
                                                p.lower() not in ('primary_conninfo', 'primary_slot_name')})
-        recovery_params.update({'standby_mode': 'on', 'recovery_target_timeline': 'latest'})
+        recovery_params.update({'standby_mode': 'on', 'recovery_target_timeline': ''})
         if self._postgresql.major_version >= 120000:
             # on pg12 we want to protect from following params being set in one of included files
             # not doing so might result in a standby being paused, promoted or shutted down.
@@ -539,14 +556,14 @@ class ConfigHandler(object):
                 # We are a standby leader and are using a replication slot. Make sure we connect to
                 # the leader of the main cluster (in case more than one host is specified in the
                 # connstr) by adding 'target_session_attrs=read-write' to primary_conninfo.
-                if is_remote_member and 'target_sesions_attrs' not in primary_conninfo and\
+                if is_remote_member and 'target_sesions_attrs' not in primary_conninfo and \
                         self._postgresql.major_version >= 100000:
                     primary_conninfo['target_session_attrs'] = 'read-write'
             recovery_params['primary_conninfo'] = primary_conninfo
 
         # standby_cluster config might have different parameters, we want to override them
-        standby_cluster_params = ['restore_command', 'archive_cleanup_command']\
-            + (['recovery_min_apply_delay'] if is_remote_member else [])
+        standby_cluster_params = ['restore_command', 'archive_cleanup_command'] \
+                                 + (['recovery_min_apply_delay'] if is_remote_member else [])
         recovery_params.update({p: member.data.get(p) for p in standby_cluster_params if member and member.data.get(p)})
         return recovery_params
 
@@ -915,7 +932,7 @@ class ConfigHandler(object):
         tcp_local_address = {'host': tcp_local_address, 'port': port}
 
         self._local_address = unix_local_address if self._config.get('use_unix_socket') else tcp_local_address
-        self.local_replication_address = unix_local_address\
+        self.local_replication_address = unix_local_address \
             if self._config.get('use_unix_socket_repl') else tcp_local_address
 
         self._postgresql.connection_string = uri('postgres', netloc, self._postgresql.database)
@@ -974,7 +991,7 @@ class ConfigHandler(object):
                                 pending_restart = True
                                 logger.info('Changed %s from %s to %s (restart might be required)',
                                             r[0], r[1], new_value)
-                                if config.get('use_unix_socket') and r[0] == 'unix_socket_directories'\
+                                if config.get('use_unix_socket') and r[0] == 'unix_socket_directories' \
                                         or r[0] in ('listen_addresses', 'port'):
                                     local_connection_address_changed = True
                             else:
@@ -1122,7 +1139,7 @@ class ConfigHandler(object):
     @property
     def rewind_credentials(self):
         return self._config['authentication'].get('rewind', self._superuser) \
-                if self._postgresql.major_version >= 110000 else self._superuser
+            if self._postgresql.major_version >= 110000 else self._superuser
 
     @property
     def ident_file(self):

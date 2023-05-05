@@ -514,3 +514,12 @@ def enable_keepalive(sock, timeout, idle, cnt=3):
 
     for opt in keepalive_socket_options(timeout, idle, cnt):
         sock.setsockopt(*opt)
+
+
+def compare_dist(source, target):
+    if len(source.keys()) != len(target.keys()):
+        return True
+    for name, value in source.items():
+        if name not in target or target[name] != value:
+            return True
+    return False
