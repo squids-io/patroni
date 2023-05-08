@@ -268,7 +268,7 @@ class K8sClient(object):
             path = self._API_URL_PREFIX + 'default/endpoints/kubernetes'
             for base_uri in api_servers_cache:
                 try:
-                    return base_uri
+                    return [base_uri]
                     # response = self.pool_manager.request('GET', base_uri + path, **kwargs)
                     # endpoint = self._handle_server_response(response, True)
                     # logger.info("get response endpoint ={0}".format(endpoint))
