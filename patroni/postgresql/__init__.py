@@ -648,9 +648,9 @@ class Postgresql(object):
         self.config.replace_pg_hba()
         self.config.replace_pg_ident()
 
-        options = ['--{0}={1}'.format(p, configuration[p]) for p in self.config.CMDLINE_OPTIONS
-                   if p in configuration and p not in ('wal_keep_segments', 'wal_keep_size')]
-
+        # options = ['--{0}={1}'.format(p, configuration[p]) for p in self.config.CMDLINE_OPTIONS
+        #            if p in configuration and p not in ('wal_keep_segments', 'wal_keep_size')]
+        options = []
         if self.cancellable.is_cancelled:
             return False
 

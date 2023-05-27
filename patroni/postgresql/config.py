@@ -405,12 +405,15 @@ class ConfigHandler(object):
         logger.info("configuration = ({0})".format(configuration))
         with ConfigWriter(self._postgresql_conf) as f:
             include = self._config.get('custom_conf') or self._postgresql_base_conf_name
-            f.writeline("include '{0}'\n".format(ConfigWriter.escape(include)))
+            if 'custom_conf' not in self._config:
+                f.writeline("include '{0}'\n".format(ConfigWriter.escape(include)))
             for name, value in sorted((configuration).items()):
                 # value = transform_postgresql_parameter_value(self._postgresql.major_version, name, value)
                 if name not in self._RECOVERY_PARAMETERS and \
                         (name != 'hba_file' or not self._postgresql.bootstrap.running_custom_bootstrap):
                     f.write_param(name, value)
+            if 'custom_conf' in self._config:
+                f.writeline("include '{0}'\n".format(ConfigWriter.escape(include)))
             # when we are doing custom bootstrap we assume that we don't know superuser password
             # and in order to be able to change it, we are opening trust access from a certain address
             # therefore we need to make sure that hba_file is not overridden
@@ -1098,16 +1101,20 @@ class ConfigHandler(object):
         data = self._postgresql.controldata()
         effective_configuration = self._server_parameters.copy()
 
-        for name, cname in options_mapping.items():
-            value = parse_int(effective_configuration[name])
-            if cname not in data:
-                logger.warning('%s is missing from pg_controldata output', cname)
-                continue
-
-            cvalue = parse_int(data[cname])
-            if cvalue > value:
-                effective_configuration[name] = cvalue
-                self._postgresql.set_pending_restart(True)
+        # # Reason for comment: The parameter configuration max_connections queried through pg_controldata will
+        # #  always be 50 more than the real configuration, #resulting in self-incremental growth of this configuration
+        # #  after each service restart, resulting in a discrepancy between the final configuration and the
+        # #  configuration value set by the user
+        # for name, cname in options_mapping.items():
+        #     value = parse_int(effective_configuration[name])
+        #     if cname not in data:
+        #         logger.warning('%s is missing from pg_controldata output', cname)
+        #         continue
+        #
+        #     cvalue = parse_int(data[cname])
+        #     if cvalue > value:
+        #         effective_configuration[name] = cvalue
+        #         self._postgresql.set_pending_restart(True)
 
         # If we are using custom bootstrap with PITR it could fail when values like max_connections
         # are increased, therefore we disable hot_standby if recovery_target_action == 'promote'.
