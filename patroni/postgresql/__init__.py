@@ -846,7 +846,7 @@ class Postgresql(object):
 
         if ready == STATE_REJECT:
             return False
-        elif ready == STATE_NO_RESPONSE:
+        elif ready == STATE_NO_RESPONSE or ready == STATE_UNKNOWN:
             ret = not self.is_running()
             if ret:
                 self.set_state('start failed')
