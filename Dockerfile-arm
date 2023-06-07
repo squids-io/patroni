@@ -1,0 +1,56 @@
+FROM swr.cn-east-2.myhuaweicloud.com/squids/opengauss:5.0.0 as builder
+
+COPY . /patroni/
+
+
+RUN yum install fuse wget vim bzip2 -y && \
+    mkdir -p /home/omm/pythoncopg2 && \
+    chmod 777 /usr/local/bin/yq && chmod 777 /usr/local/bin/archive_wal.sh && \
+    wget https://opengauss.obs.cn-south-1.myhuaweicloud.com/5.0.0/arm/openGauss-5.0.0-openEuler-aarch64-Python.tar.gz && \
+    tar zxvf openGauss-5.0.0-openEuler-aarch64-Python.tar.gz -C /home/omm/pythoncopg2 && \
+    mv /home/omm/pythoncopg2/psycopg2 /usr/local/lib/python3.7/site-packages/psycopg2 && \
+    chmod 755 /usr/local/lib/python3.7/site-packages/psycopg2 && chmod 755 /home/omm/pythoncopg2/lib && \
+    chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/errorcodes.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/errors.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/extensions.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/extras.py && \
+    chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/__init__.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/_ipaddress.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/_json.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/pool.py && \
+    chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/_range.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/sql.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/tz.py && chmod 754 /usr/local/lib/python3.7/site-packages/psycopg2/_psycopg.so &&\
+    rm -rf /usr/local/lib/python3.7/site-packages/psycopg \
+    rm -rf /patroni/dist
+
+RUN python3 -m venv /tmp/myvenv && \
+    source ./tmp/myvenv/bin/activate && \
+    cd /patroni && pip install --upgrade pip  && \
+    pip install -r requirements.txt && \
+    cp -r /usr/local/lib/python3.7/site-packages/psycopg2 /tmp/myvenv/lib/python3.7/site-packages/psycopg2 && \
+    export LD_LIBRARY_PATH=/home/omm/pythoncopg2/lib && \
+    sh /patroni/mkbinary.sh
+
+FROM swr.cn-east-2.myhuaweicloud.com/squids/opengauss:5.0.0
+
+COPY --from=builder /patroni/dist/patroni /home/omm/patroni
+COPY docker/patroni-bootstarp-ha.sh /home/omm/
+COPY docker/arm/tini /usr/local/bin/tini
+COPY docker/arm/juicefs /usr/local/bin/juicefs
+COPY docker/arm/yq /usr/local/bin/yq
+COPY docker/archive_wal.sh /usr/local/bin/archive_wal.sh
+
+RUN yum install fuse wget vim bzip2 -y && \
+    chmod +x /usr/local/bin/juicefs && \
+    mkdir -p /tmp/config && \
+    mkdir -p /tmp/opengauss/client-certs && \
+    mkdir -p /tmp/opengauss/cluster-certs && \
+    mkdir -p /backup/wal/onepg && \
+    chmod 777 /usr/local/bin/yq && chmod 777 /usr/local/bin/archive_wal.sh
+
+COPY docker/postgres-ha-bootstrap.yaml /tmp/config/
+COPY docker/ssl/cacert.pem /tmp/opengauss/client-certs/ca.crt
+COPY docker/ssl/client.crt /tmp/opengauss/client-certs/repl.crt
+COPY docker/ssl/client.key /tmp/opengauss/client-certs/repl.key
+COPY docker/ssl/cacert.pem /tmp/opengauss/cluster-certs/ca.crt
+COPY docker/ssl/server.crt /tmp/opengauss/cluster-certs/cluster.crt
+COPY docker/ssl/server.key /tmp/opengauss/cluster-certs/cluster.key
+
+RUN chown omm:omm -R /tmp
+
+USER omm
+WORKDIR /home/omm
+CMD ["./patroni-bootstarp-ha.sh"]

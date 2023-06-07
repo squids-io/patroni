@@ -1,0 +1,31 @@
+FROM swr.cn-east-2.myhuaweicloud.com/squids/opengauss:5.0.0
+
+COPY docker/amd/patroni /home/omm/
+COPY docker/amd/juicefs /usr/local/bin/juicefs
+COPY docker/patroni-bootstarp-ha.sh /home/omm/
+COPY docker/amd/tini /usr/local/bin/tini
+COPY docker/amd/yq /usr/local/bin/yq
+COPY docker/archive_wal.sh /usr/local/bin/archive_wal.sh
+
+
+RUN yum install fuse wget -y && \
+    chmod +x /usr/local/bin/juicefs && \
+    mkdir -p /tmp/config && \
+    mkdir -p /tmp/opengauss/client-certs && \
+    mkdir -p /tmp/opengauss/cluster-certs && \
+    mkdir -p /backup/wal/onepg && \
+    chmod 777 /usr/local/bin/yq && chmod 777 /usr/local/bin/archive_wal.sh
+
+COPY docker/postgres-ha-bootstrap.yaml /tmp/config/
+COPY docker/ssl/cacert.pem /tmp/opengauss/client-certs/ca.crt
+COPY docker/ssl/client.crt /tmp/opengauss/client-certs/repl.crt
+COPY docker/ssl/client.key /tmp/opengauss/client-certs/repl.key
+COPY docker/ssl/cacert.pem /tmp/opengauss/cluster-certs/ca.crt
+COPY docker/ssl/server.crt /tmp/opengauss/cluster-certs/cluster.crt
+COPY docker/ssl/server.key /tmp/opengauss/cluster-certs/cluster.key
+
+RUN chown omm:omm -R /tmp
+
+USER omm
+WORKDIR /home/omm
+CMD ["./patroni-bootstarp-ha.sh"]
