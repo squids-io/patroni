@@ -5,7 +5,6 @@ COPY . /patroni/
 
 RUN yum install fuse wget vim bzip2 -y && \
     mkdir -p /home/omm/pythoncopg2 && \
-    chmod 777 /usr/local/bin/yq && chmod 777 /usr/local/bin/archive_wal.sh && \
     wget https://opengauss.obs.cn-south-1.myhuaweicloud.com/5.0.0/arm/openGauss-5.0.0-openEuler-aarch64-Python.tar.gz && \
     tar zxvf openGauss-5.0.0-openEuler-aarch64-Python.tar.gz -C /home/omm/pythoncopg2 && \
     mv /home/omm/pythoncopg2/psycopg2 /usr/local/lib/python3.7/site-packages/psycopg2 && \
