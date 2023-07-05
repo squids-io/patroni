@@ -32,7 +32,7 @@ COPY docker/arm/juicefs /usr/local/bin/juicefs
 COPY docker/arm/yq /usr/local/bin/yq
 COPY docker/archive_wal.sh /usr/local/bin/archive_wal.sh
 
-RUN yum install fuse wget vim bzip2 -y && \
+RUN yum install fuse wget vim bzip2 hostname -y && \
     chmod +x /usr/local/bin/juicefs && \
     mkdir -p /tmp/config && \
     mkdir -p /tmp/opengauss/client-certs && \
