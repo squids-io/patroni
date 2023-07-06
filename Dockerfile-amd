@@ -24,7 +24,9 @@ COPY docker/ssl/cacert.pem /tmp/opengauss/cluster-certs/ca.crt
 COPY docker/ssl/server.crt /tmp/opengauss/cluster-certs/cluster.crt
 COPY docker/ssl/server.key /tmp/opengauss/cluster-certs/cluster.key
 
-RUN chown omm:omm -R /tmp
+RUN chown omm:omm -R /tmp && chmod 600 /tmp/opengauss/client-certs/ca.crt && chmod 600 /tmp/opengauss/client-certs/repl.crt && \
+    chmod 600 /tmp/opengauss/client-certs/repl.key && chmod 600 /tmp/opengauss/cluster-certs/ca.crt && chmod 600 /tmp/opengauss/cluster-certs/cluster.crt && \
+    chmod 600 /tmp/opengauss/cluster-certs/cluster.crt && chmod 600 /tmp/opengauss/cluster-certs/cluster.key
 
 USER omm
 WORKDIR /home/omm

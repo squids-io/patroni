@@ -9,6 +9,7 @@ build-amd:
 	docker buildx build --platform linux/amd64 -t $(image):$(version)-amd -f Dockerfile-amd . --push
 
 create-manifest:
+	docker manifest rm $(image):$(version)
 	docker manifest create $(image):$(version) $(image):$(version)-arm  $(image):$(version)-amd
 
 push-manifest:

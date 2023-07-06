@@ -38,7 +38,16 @@ RUN yum install fuse wget vim bzip2 hostname -y && \
     mkdir -p /tmp/opengauss/client-certs && \
     mkdir -p /tmp/opengauss/cluster-certs && \
     mkdir -p /backup/wal/onepg && \
-    chmod 777 /usr/local/bin/yq && chmod 777 /usr/local/bin/archive_wal.sh
+    chmod 777 /usr/local/bin/yq && chmod 777 /usr/local/bin/archive_wal.sh && \
+    mkdir -p /home/omm/pythoncopg2 && \
+    wget https://opengauss.obs.cn-south-1.myhuaweicloud.com/5.0.0/arm/openGauss-5.0.0-openEuler-aarch64-Python.tar.gz && \
+    tar zxvf openGauss-5.0.0-openEuler-aarch64-Python.tar.gz -C /home/omm/pythoncopg2 && \
+    mv /home/omm/pythoncopg2/psycopg2 /usr/local/lib/python3.7/site-packages/psycopg2 && \
+    chmod 755 /usr/local/lib/python3.7/site-packages/psycopg2 && chmod 755 /home/omm/pythoncopg2/lib && \
+    chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/errorcodes.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/errors.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/extensions.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/extras.py && \
+    chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/__init__.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/_ipaddress.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/_json.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/pool.py && \
+    chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/_range.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/sql.py && chmod 644 /usr/local/lib/python3.7/site-packages/psycopg2/tz.py && chmod 754 /usr/local/lib/python3.7/site-packages/psycopg2/_psycopg.so &&\
+    rm -rf /usr/local/lib/python3.7/site-packages/psycopg
 
 COPY docker/postgres-ha-bootstrap.yaml /tmp/config/
 COPY docker/ssl/cacert.pem /tmp/opengauss/client-certs/ca.crt
@@ -48,7 +57,9 @@ COPY docker/ssl/cacert.pem /tmp/opengauss/cluster-certs/ca.crt
 COPY docker/ssl/server.crt /tmp/opengauss/cluster-certs/cluster.crt
 COPY docker/ssl/server.key /tmp/opengauss/cluster-certs/cluster.key
 
-RUN chown omm:omm -R /tmp
+RUN chown omm:omm -R /tmp && chmod 600 /tmp/opengauss/client-certs/ca.crt && chmod 600 /tmp/opengauss/client-certs/repl.crt && \
+    chmod 600 /tmp/opengauss/client-certs/repl.key && chmod 600 /tmp/opengauss/cluster-certs/ca.crt && chmod 600 /tmp/opengauss/cluster-certs/cluster.crt && \
+    chmod 600 /tmp/opengauss/cluster-certs/cluster.crt && chmod 600 /tmp/opengauss/cluster-certs/cluster.key
 
 USER omm
 WORKDIR /home/omm
