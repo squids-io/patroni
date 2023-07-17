@@ -430,6 +430,10 @@ class Ha(object):
                     return msg
 
             msg = 'running pg_rewind from ' + leader.name
+            # 修改配置文件 去除include ，同时在build时指定 -q的方式，不启动数据库，等build完成后，在下个循环中判断是否build成功，成功则启动数据库
+            self.load_cluster_from_dcs()
+            self.state_handler.reset_cluster_replconninfo(self.cluster)
+            self.state_handler.config.write_build_postgres_conf()
             return self._async_executor.try_run_async(msg, self._rewind.execute, args=(leader,)) or msg
 
         if self._rewind.should_remove_data_directory_on_diverged_timelines and not self.is_standby_cluster():
@@ -463,11 +467,14 @@ class Ha(object):
 
         role = 'replica'
         if self.is_standby_cluster() or not self.has_lock():
-            if not self._rewind.executed:
+            if not self._rewind.rewind_status_success():
+                # 判断是否重建成功，重建成功则，修改回原来的配置文件，启动数据库，如果失败，则返回错误，等待下次重试
+                # 此处注释下面这一行代码，如果发现rewind失败了，则继续重试，现在默认做数据恢复时执行rewind，所以不会存在NOT_NEED状态
+                # if not self._rewind.executed:
                 self._rewind.trigger_check_diverged_lsn()
-            msg = self._handle_rewind_or_reinitialize()
-            if msg:
-                return msg
+                msg = self._handle_rewind_or_reinitialize()
+                if msg:
+                    return msg
 
             if self.has_lock():  # in standby cluster
                 msg = "starting as a standby leader because i had the session lock"
@@ -834,7 +841,7 @@ class Ha(object):
         """
         lag = (self.cluster.last_lsn or 0) - wal_position
         logger.info("is_lagging lag=({0})".format(lag))
-        logger.info("next lag=({0})".format(self.patroni.config.get('maximum_lag_on_failover', 0)))
+        logger.info("maximum_lag_on_failover=({0})".format(self.patroni.config.get('maximum_lag_on_failover', 0)))
         return lag > self.patroni.config.get('maximum_lag_on_failover', 0)
 
     def _is_healthiest_node(self, members, check_replication_lag=True):
@@ -1559,7 +1566,7 @@ class Ha(object):
         try:
             try:
                 self.load_cluster_from_dcs()
-                self.state_handler.reset_cluster_replconninfo(self.cluster)
+                self.state_handler.reset_cluster_replconninfo(self.cluster, self.patroni.config['bootstrap'])
                 self.state_handler.reset_cluster_info_state(self.cluster, self.patroni.nofailover)
             except Exception:
                 self.state_handler.reset_cluster_info_state(None, self.patroni.nofailover)

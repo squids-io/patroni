@@ -395,7 +395,7 @@ class Postgresql(object):
 
             self._is_synchronous_mode = cluster.is_synchronous_mode()
 
-    def reset_cluster_replconninfo(self, cluster):
+    def reset_cluster_replconninfo(self, cluster, hbaConfig=None):
         new_cluster_member = None
         is_update = False
         old_cluster_member = self.cluster_members()
@@ -415,6 +415,8 @@ class Postgresql(object):
             logger.info("is_update=true")
             if self.state == "running":
                 logger.info("is_running")
+                if hbaConfig:
+                    self.config.write_pg_hba_conf(hbaConfig)
                 self.config.write_postgresql_conf()
                 self.reload()
 
@@ -620,6 +622,7 @@ class Postgresql(object):
         # the former node, otherwise, we might get a stalled one
         # after kill -9, which would report incorrect data to
         # patroni.
+        logger.info("start opengauss")
         self._connection.close()
 
         if self.is_running():
@@ -759,7 +762,7 @@ class Postgresql(object):
             before_shutdown()
 
         # Send signal to postmaster to stop
-        success = postmaster.signal_stop(mode, self.pgcommand('pg_ctl'))
+        success = postmaster.signal_stop(mode, self.pgcommand('gs_ctl'))
         if success is not None:
             if success and on_safepoint:
                 on_safepoint()
@@ -894,6 +897,7 @@ class Postgresql(object):
 
         :returns: True when restart was successful and timeout did not expire when waiting.
         """
+        logger.info("restart opengauss")
         self.set_state('restarting')
         if not block_callbacks:
             self.__cb_pending = CallbackAction.ON_RESTART
@@ -910,7 +914,7 @@ class Postgresql(object):
         return True
 
     def get_guc_value(self, name):
-        cmd = [self.pgcommand('postgres'), '-D', self._data_dir, '-C', name,
+        cmd = [self.pgcommand('gaussdb'), '-D', self._data_dir, '-C', name,
                '--config-file={}'.format(self.config.postgresql_conf)]
         try:
             data = subprocess.check_output(cmd)

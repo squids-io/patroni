@@ -431,6 +431,63 @@ class ConfigHandler(object):
                 if not self._postgresql.bootstrap.keep_existing_recovery_conf:
                     self._sanitize_auto_conf()
 
+    def write_pg_hba_conf(self, config):
+        pg_hba = config.get('pg_hba', []).copy()
+        hostSuperuser = "host all  " + self.superuser['username'] + " "
+        cluster_members = self._postgresql.cluster_members()
+        logger.info("cluster_member = ({0})".format(cluster_members))
+        if self._postgresql.dbtype == 'opengauss' and cluster_members:
+            nodename = self._postgresql.name
+            for name, value in cluster_members.items():
+                if name == nodename:
+                    continue
+                superuserTrust = hostSuperuser + value + "/32 trust"
+                pg_hba.insert(0, superuserTrust)
+        logger.info("hba_config = ({0}) ,----- new hostSuperuser = ({1})".format(pg_hba, hostSuperuser))
+        with open(self._pg_hba_conf, 'w') as f:
+            f.write('\n{}\n'.format('\n'.join(pg_hba)))
+        return True
+
+    def write_build_postgres_conf(self, configuration=None):
+        os.rename(self._postgresql_conf, os.path.join(self._config_dir, "old_postgresql.conf"))
+
+        configuration = configuration or self._server_parameters.copy()
+        # Due to the permanent logical replication slots configured we have to enable hot_standby_feedback
+        if self._postgresql.enforce_hot_standby_feedback:
+            configuration['hot_standby_feedback'] = 'on'
+
+        cluster_members = self._postgresql.cluster_members()
+        logger.info("cluster_member = ({0})".format(cluster_members))
+        if self._postgresql.dbtype == 'opengauss' and cluster_members:
+            nodename = self._postgresql.name
+            localhost = cluster_members.get(nodename, None)
+            if localhost:
+                index = 1
+                for name, value in cluster_members.items():
+                    if name == nodename:
+                        continue
+                    configuration['replconninfo{0}'.format(index)] = 'localhost={0} localport=5433 ' \
+                                                                     'localheartbeatport=26002 localservice=26003 ' \
+                                                                     'remotehost={1} remoteport=5433 ' \
+                                                                     'remoteheartbeatport=26002 ' \
+                                                                     'remoteservice=26003'.format(localhost, value)
+                    index += 1
+        logger.info("configuration = ({0})".format(configuration))
+        with ConfigWriter(self._postgresql_conf) as f:
+            for name, value in sorted((configuration).items()):
+                # value = transform_postgresql_parameter_value(self._postgresql.major_version, name, value)
+                if name not in self._RECOVERY_PARAMETERS and \
+                        (name != 'hba_file' or not self._postgresql.bootstrap.running_custom_bootstrap):
+                    f.write_param(name, value)
+            # when we are doing custom bootstrap we assume that we don't know superuser password
+            # and in order to be able to change it, we are opening trust access from a certain address
+            # therefore we need to make sure that hba_file is not overridden
+            # after changing superuser password we will "revert" all these "changes"
+            if self._postgresql.bootstrap.running_custom_bootstrap or 'hba_file' not in self._server_parameters:
+                f.write_param('hba_file', self._pg_hba_conf)
+            if 'ident_file' not in self._server_parameters:
+                f.write_param('ident_file', self._pg_ident_conf)
+
     def append_pg_hba(self, config):
         if not self.hba_file and not self._config.get('pg_hba'):
             with open(self._pg_hba_conf, 'a') as f:
@@ -1145,8 +1202,7 @@ class ConfigHandler(object):
 
     @property
     def rewind_credentials(self):
-        return self._config['authentication'].get('rewind', self._superuser) \
-            if self._postgresql.major_version >= 110000 else self._superuser
+        return self._config['authentication'].get('rewind', self.replication)
 
     @property
     def ident_file(self):

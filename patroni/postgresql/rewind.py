@@ -42,14 +42,14 @@ class Rewind(object):
         if not self.enabled:
             return False
 
-        cmd = [self._postgresql.pgcommand('pg_rewind'), '--help']
+        cmd = [self._postgresql.pgcommand('gs_ctl'), '--help']
         try:
             ret = subprocess.call(cmd, stdout=open(os.devnull, 'w'), stderr=subprocess.STDOUT)
             if ret != 0:  # pg_rewind is not there, close up the shop and go home
                 return False
         except OSError:
             return False
-        return self.configuration_allows_rewind(self._postgresql.controldata())
+        return True
 
     @property
     def should_remove_data_directory_on_diverged_timelines(self):
@@ -88,6 +88,9 @@ class Rewind(object):
             logger.exception('Exception when working with leader')
             return 'not accessible or not healty'
 
+    def rewind_status_success(self):
+        return self._state == REWIND_STATUS.SUCCESS
+
     def _get_checkpoint_end(self, timeline, lsn):
         """The checkpoint record size in WAL depends on postgres major version and platform (memory alignment).
         Hence, the only reliable way to figure out where it ends, read the record from file with the help of pg_waldump
@@ -124,7 +127,9 @@ class Rewind(object):
             if data.get('Database cluster state') in ('shut down in recovery', 'in archive recovery'):
                 in_recovery = True
                 lsn = data.get('Minimum recovery ending location')
-                timeline = int(data.get("Min recovery ending loc's timeline"))
+                # 在opengauss中执行pg_controldata后，在详情中没有找到此参数值，所以这里用个默认值代替，在上层并不依赖这里的返回值做判断，都会返回true，告知需要做rewind
+                # timeline = int(data.get("Min recovery ending loc's timeline"))
+                timeline = 1
                 if lsn == '0/0' or timeline == 0:  # it was a primary when it crashed
                     data['Database cluster state'] = 'shut down'
             if data.get('Database cluster state') == 'shut down':
@@ -242,6 +247,7 @@ class Rewind(object):
             self._log_primary_history(history, i)
 
         self._state = need_rewind and REWIND_STATUS.NEED or REWIND_STATUS.NOT_NEED
+        self._state = REWIND_STATUS.NEED
 
     def rewind_or_reinitialize_needed_and_possible(self, leader):
         if leader and leader.name != self._postgresql.name and leader.conn_url and self._state == REWIND_STATUS.CHECK:
@@ -388,14 +394,13 @@ class Rewind(object):
                                                      (self._postgresql.major_version >= 130000 and
                                                       self._postgresql.config._config_dir == self._postgresql.data_dir))
 
-        cmd = [self._postgresql.pgcommand('pg_rewind')]
+        cmd = [self._postgresql.pgcommand('gs_ctl')]
         if pg_rewind_can_restore:
             cmd.append('--restore-target-wal')
             if self._postgresql.major_version >= 150000 and\
                     self._postgresql.config._config_dir != self._postgresql.data_dir:
                 cmd.append('--config-file={0}'.format(self._postgresql.config.postgresql_conf))
-
-        cmd.extend(['-D', self._postgresql.data_dir, '--source-server', dsn])
+        cmd.extend(['build', '-q', '-b', 'incremental', '-D', self._postgresql.data_dir])
 
         while True:
             results = {}
@@ -503,7 +508,7 @@ class Rewind(object):
 
     def single_user_mode(self, communicate=None, options=None):
         """run a given command in a single-user mode. If the command is empty - then just start and stop"""
-        cmd = [self._postgresql.pgcommand('postgres'), '--single', '-D', self._postgresql.data_dir]
+        cmd = [self._postgresql.pgcommand('gaussdb'), '--single', '-D', self._postgresql.data_dir]
         for opt, val in sorted((options or {}).items()):
             cmd.extend(['-c', '{0}={1}'.format(opt, val)])
         # need a database name to connect

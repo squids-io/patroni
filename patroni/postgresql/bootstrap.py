@@ -346,15 +346,15 @@ END;$$""".format(quote_literal(name), quote_ident(name, self._postgresql.connect
 
                 rewind = postgresql.config.rewind_credentials
                 if not deep_compare(rewind, superuser):
-                    self.create_or_update_role(rewind['username'], rewind.get('password'), [])
-                    for f in ('pg_ls_dir(text, boolean, boolean)', 'pg_stat_file(text, boolean)',
-                              'pg_read_binary_file(text)', 'pg_read_binary_file(text, bigint, bigint, boolean)'):
-                        sql = """DO $$
-BEGIN
-    SET local synchronous_commit = 'local';
-    GRANT EXECUTE ON function pg_catalog.{0} TO {1};
-END;$$""".format(f, quote_ident(rewind['username'], postgresql.connection()))
-                        postgresql.query(sql)
+                    self.create_or_update_role(rewind['username'], rewind.get('password'), ['SYSADMIN'])
+#                     for f in ('pg_ls_dir(text, boolean, boolean)', 'pg_stat_file(text, boolean)',
+#                               'pg_read_binary_file(text)', 'pg_read_binary_file(text, bigint, bigint, boolean)'):
+#                         sql = """DO $$
+# BEGIN
+#     SET local synchronous_commit = 'local';
+#     GRANT EXECUTE ON function pg_catalog.{0} TO {1};
+# END;$$""".format(f, quote_ident(rewind['username'], postgresql.connection()))
+#                         postgresql.query(sql)
 
                 for name, value in (config.get('users') or {}).items():
                     if all(name != a.get('username') for a in (superuser, replication, rewind)):
