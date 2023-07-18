@@ -514,14 +514,14 @@ recovery_parameters = CaseInsensitiveDict({
     'recovery_min_apply_delay': Integer(90400, None, 0, 2147483647, 'ms'),
     'recovery_target': Enum(90400, None, ('immediate', '')),
     'recovery_target_action': Enum(90500, None, ('pause', 'promote', 'shutdown')),
-    'recovery_target_inclusive': Bool(90300, None),
-    'recovery_target_lsn': String(100000, None),
-    'recovery_target_name': String(90400, None),
-    'recovery_target_time': String(90300, None),
-    'recovery_target_timeline': String(90300, None),
-    'recovery_target_xid': String(90300, None),
-    'restore_command': String(90300, None),
-    'standby_mode': Bool(90300, 120000),
+    'recovery_target_inclusive': Bool(90000, None),
+    'recovery_target_lsn': String(90000, None),
+    'recovery_target_name': String(90000, None),
+    'recovery_target_time': String(90000, None),
+    'recovery_target_timeline': String(90000, None),
+    'recovery_target_xid': String(90000, None),
+    'restore_command': String(90000, None),
+    'standby_mode': Bool(90000, 120000),
     'trigger_file': String(90300, 120000)
 })
 
