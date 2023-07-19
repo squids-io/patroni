@@ -432,7 +432,7 @@ class ConfigHandler(object):
                     self._sanitize_auto_conf()
 
     def write_pg_hba_conf(self, config):
-        pg_hba = config.get('pg_hba', []).copy()
+        pg_hba = config.copy()
         hostSuperuser = "host all  " + self.superuser['username'] + " "
         cluster_members = self._postgresql.cluster_members()
         logger.info("cluster_member = ({0})".format(cluster_members))

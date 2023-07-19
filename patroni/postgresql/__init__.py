@@ -115,6 +115,8 @@ class Postgresql(object):
 
         self._cluster_members = None
 
+        self._default_pg_hba_conf = None
+
         if self.is_running():  # we are "joining" already running postgres
             self.set_state('running')
             self.set_role('master' if self.is_leader() else 'replica')
@@ -214,6 +216,13 @@ class Postgresql(object):
 
     def set_cluster_members(self, members):
         self._cluster_members = members
+
+    def pg_hba_conf(self):
+        return self._default_pg_hba_conf
+
+    def set_pg_hba_conf(self, pg_hba):
+        self._default_pg_hba_conf = pg_hba
+
 
     def _version_file_exists(self):
         return not self.data_directory_empty() and os.path.isfile(self._version_file)
@@ -647,6 +656,7 @@ class Postgresql(object):
 
         self.config.check_directories()
         self.config.write_postgresql_conf(configuration)
+        self.config.write_pg_hba_conf(self.pg_hba_conf())
         self.config.resolve_connection_addresses()
         self.config.replace_pg_hba()
         self.config.replace_pg_ident()

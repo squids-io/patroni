@@ -4,6 +4,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 
 from threading import Lock, Thread
 
@@ -386,6 +387,7 @@ class Rewind(object):
         dsn = self._postgresql.config.format_dsn(r, True)
         logger.info('running pg_rewind from %s', dsn)
 
+        logger.info("get restore_command = ({0})".format(self._postgresql.config.get('recovery_conf', {})))
         restore_command = self._postgresql.config.get('recovery_conf', {}).get('restore_command') \
             if self._postgresql.major_version < 120000 else self._postgresql.get_guc_value('restore_command')
 
@@ -458,6 +460,7 @@ class Rewind(object):
             self._maybe_clean_pg_replslot()
             self._state = REWIND_STATUS.SUCCESS
         else:
+            time.sleep(5)
             if not self.check_leader_is_not_in_recovery(r):
                 logger.warning('Failed to rewind because primary %s become unreachable', leader.name)
                 if not self.can_rewind:  # It is possible that the previous attempt damaged pg_control file!

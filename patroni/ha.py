@@ -132,6 +132,7 @@ class Ha(object):
     def __init__(self, patroni):
         self.patroni = patroni
         self.state_handler = patroni.postgresql
+        self.state_handler.set_pg_hba_conf(patroni.config['bootstrap'].get('pg_hba', []))
         self._rewind = Rewind(self.state_handler)
         self.dcs = patroni.dcs
         self.cluster = None
@@ -1566,7 +1567,7 @@ class Ha(object):
         try:
             try:
                 self.load_cluster_from_dcs()
-                self.state_handler.reset_cluster_replconninfo(self.cluster, self.patroni.config['bootstrap'])
+                self.state_handler.reset_cluster_replconninfo(self.cluster, self.patroni.config['bootstrap'].get('pg_hba', []))
                 self.state_handler.reset_cluster_info_state(self.cluster, self.patroni.nofailover)
             except Exception:
                 self.state_handler.reset_cluster_info_state(None, self.patroni.nofailover)

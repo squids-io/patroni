@@ -1,14 +1,22 @@
-FROM swr.cn-east-2.myhuaweicloud.com/squids/opengauss:5.0.0
+FROM swr.cn-south-1.myhuaweicloud.com/opengauss/x86_64/opengauss:5.0.0
 
-COPY docker/amd/patroni /home/omm/
 COPY docker/amd/juicefs /usr/local/bin/juicefs
-COPY docker/patroni-bootstarp-ha.sh /home/omm/
 COPY docker/amd/tini /usr/local/bin/tini
 COPY docker/amd/yq /usr/local/bin/yq
 COPY docker/archive_wal.sh /usr/local/bin/archive_wal.sh
 
 
-RUN yum install fuse wget -y && \
+RUN yum install fuse wget bzip2 bzip2-devel curl libaio -y && \
+    groupadd -g 70 omm;  \
+    useradd -u 70 -g omm -d /home/omm omm;  \
+    mkdir -p /var/lib/opengauss && \
+    mkdir -p /usr/local/opengauss && \
+    mkdir -p /var/run/opengauss  && \
+    mkdir /docker-entrypoint-initdb.d && \
+    tar -xf /opengauss/openGauss-5.0.0-CentOS-64bit-all.tar.gz -C /opengauss/ && \
+    tar -xf /opengauss/openGauss-5.0.0-CentOS-64bit.tar.bz2 -C /usr/local/opengauss && \
+    chown -R omm:omm /var/run/opengauss && chown -R omm:omm /usr/local/opengauss && chown -R omm:omm /var/lib/opengauss &&  chown -R omm:omm /docker-entrypoint-initdb.d && \
+    chmod 2777 /var/run/opengauss && \
     chmod +x /usr/local/bin/juicefs && \
     mkdir -p /tmp/config && \
     mkdir -p /tmp/opengauss/client-certs && \
@@ -16,6 +24,14 @@ RUN yum install fuse wget -y && \
     mkdir -p /backup/wal/onepg && \
     chmod 777 /usr/local/bin/yq && chmod 777 /usr/local/bin/archive_wal.sh
 
+
+RUN set -eux; \
+    echo "export GAUSSHOME=/usr/local/opengauss"  >> /home/omm/.bashrc && \
+    echo "export PATH=\$GAUSSHOME/bin:\$PATH " >> /home/omm/.bashrc && \
+    echo "export LD_LIBRARY_PATH=\$GAUSSHOME/lib:\$LD_LIBRARY_PATH" >> /home/omm/.bashrc
+
+COPY docker/amd/patroni /home/omm/
+COPY docker/patroni-bootstarp-ha.sh /home/omm/
 COPY docker/postgres-ha-bootstrap.yaml /tmp/config/
 COPY docker/ssl/cacert.pem /tmp/opengauss/client-certs/ca.crt
 COPY docker/ssl/client.crt /tmp/opengauss/client-certs/repl.crt
@@ -26,8 +42,8 @@ COPY docker/ssl/server.key /tmp/opengauss/cluster-certs/cluster.key
 
 RUN chown omm:omm -R /tmp && chmod 600 /tmp/opengauss/client-certs/ca.crt && chmod 600 /tmp/opengauss/client-certs/repl.crt && \
     chmod 600 /tmp/opengauss/client-certs/repl.key && chmod 600 /tmp/opengauss/cluster-certs/ca.crt && chmod 600 /tmp/opengauss/cluster-certs/cluster.crt && \
-    chmod 600 /tmp/opengauss/cluster-certs/cluster.crt && chmod 600 /tmp/opengauss/cluster-certs/cluster.key
+    chmod 600 /tmp/opengauss/cluster-certs/cluster.crt && chmod 600 /tmp/opengauss/cluster-certs/cluster.key && chmod 755 /home/omm/patroni
 
 USER omm
 WORKDIR /home/omm
-CMD ["./patroni-bootstarp-ha.sh"]
+ENTRYPOINT ["./patroni-bootstarp-ha.sh"]

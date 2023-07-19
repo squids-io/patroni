@@ -209,4 +209,6 @@ build_bootstrap_config_file
 
 remove_ssl_file
 
+source /home/omm/.bashrc
+
 tini --  ./patroni /tmp/config/postgres-ha-bootstrap.yaml
