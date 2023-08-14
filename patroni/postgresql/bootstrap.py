@@ -345,7 +345,7 @@ END;$$""".format(quote_literal(name), quote_ident(name, self._postgresql.connect
                 self.create_or_update_role(replication['username'], replication.get('password'), ['SYSADMIN'])
 
                 rewind = postgresql.config.rewind_credentials
-                if not deep_compare(rewind, superuser):
+                if not deep_compare(rewind, superuser) and not deep_compare(rewind, replication):
                     self.create_or_update_role(rewind['username'], rewind.get('password'), ['SYSADMIN'])
 #                     for f in ('pg_ls_dir(text, boolean, boolean)', 'pg_stat_file(text, boolean)',
 #                               'pg_read_binary_file(text)', 'pg_read_binary_file(text, bigint, bigint, boolean)'):
